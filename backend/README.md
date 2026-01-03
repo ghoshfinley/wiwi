@@ -34,6 +34,7 @@ The server will start on port 8080 by default.
 
 - `PORT` - Server port (default: 8080)
 - `DB_PATH` - Path to SQLite database file (default: ./wishlist.db)
+- `ALLOWED_ORIGIN` - CORS allowed origin (default: * for development, set to specific domain for production)
 
 ## Build
 
