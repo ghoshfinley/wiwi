@@ -18,10 +18,22 @@ export default function Home() {
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
   useEffect(() => {
-    fetchItems();
-  }, []);
+    const fetchItems = async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/items`);
+        if (response.ok) {
+          const data = await response.json();
+          setItems(data || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch items:', err);
+      }
+    };
 
-  const fetchItems = async () => {
+    fetchItems();
+  }, [API_URL]);
+
+  const refreshItems = async () => {
     try {
       const response = await fetch(`${API_URL}/api/items`);
       if (response.ok) {
@@ -51,7 +63,7 @@ export default function Home() {
 
       if (response.ok) {
         setNewItem({ title: '', description: '', url: '' });
-        fetchItems();
+        refreshItems();
       } else {
         setError('Failed to add item');
       }
@@ -68,7 +80,7 @@ export default function Home() {
       });
 
       if (response.ok) {
-        fetchItems();
+        refreshItems();
       }
     } catch (err) {
       console.error('Failed to delete item:', err);
