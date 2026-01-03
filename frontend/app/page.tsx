@@ -242,7 +242,7 @@ export default function Home() {
                     className="text-white hover:text-blue-200 transition-colors"
                     aria-label="Add item"
                   >
-                    <AddIcon fontSize="large" />
+                    <AddIcon sx={{ fontSize: 28 }} />
                   </button>
                 )}
                 {/* Share button for all users */}
@@ -257,7 +257,7 @@ export default function Home() {
                       aria-label="Toggle share link"
                       onClick={() => setIsShareOpen((open) => !open)}
                     >
-                      <LinkIcon fontSize="large" />
+                      <LinkIcon sx={{ fontSize: 28 }} />
                     </button>
                     {isShareOpen && (
                       <div className="absolute right-0 top-8 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 shadow-lg rounded-lg px-4 py-3 w-72 border border-gray-100 dark:border-gray-700 flex flex-col gap-3">
@@ -275,7 +275,7 @@ export default function Home() {
                             className="h-9 w-10 bg-blue-600 disabled:bg-gray-400 text-white rounded hover:bg-blue-500 transition-colors flex items-center justify-center"
                             aria-label="Copy shareable link"
                           >
-                            {copied ? <CheckCircleIcon fontSize="medium" /> : <ContentCopyIcon fontSize="medium" />}
+                            {copied ? <CheckCircleIcon sx={{ fontSize: 20 }} /> : <ContentCopyIcon sx={{ fontSize: 20 }} />}
                           </button>
                         </div>
                       </div>
@@ -345,5 +345,5 @@ export default function Home() {
         </div>
       </div>
     </div>
-  );
+  );git 
 }
