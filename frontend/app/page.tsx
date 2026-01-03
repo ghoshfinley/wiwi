@@ -1,8 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import LinkIcon from '@mui/icons-material/Link';
+import AddIcon from '@mui/icons-material/Add';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { useAuth } from './contexts/AuthContext';
 import { useSearchParams } from 'next/navigation';
+import AddItemForm from './components/AddItemForm';
 
 interface WishlistItem {
   id: number;
@@ -13,14 +18,19 @@ interface WishlistItem {
 }
 
 export default function Home() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, logout } = useAuth();
   const searchParams = useSearchParams();
   const viewingListUUID = searchParams.get('list'); // Get list UUID from URL params
   
   const [items, setItems] = useState<WishlistItem[]>([]);
-  const [newItem, setNewItem] = useState({ title: '', description: '', url: '' });
   const [error, setError] = useState('');
   const [shareableLink, setShareableLink] = useState('');
+  const [isAddFormOpen, setIsAddFormOpen] = useState(false);
+  const [listOwnerName, setListOwnerName] = useState<string>('');
+  const [isShareOpen, setIsShareOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const shareRef = useRef<HTMLDivElement | null>(null);
+  const copyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8081';
 
@@ -47,12 +57,31 @@ export default function Home() {
   }, [API_URL, listUUID]);
 
   useEffect(() => {
+    const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+
     // Generate shareable link for authenticated users
     if (user) {
-      const baseUrl = window.location.origin;
       setShareableLink(`${baseUrl}/?list=${user.uuid}`);
+      setListOwnerName(user.name || user.email);
+    } else if (viewingListUUID) {
+      // Generate shareable link for viewers of a shared list
+      setShareableLink(`${baseUrl}/?list=${viewingListUUID}`);
+      setListOwnerName('');
     }
-  }, [user]);
+  }, [user, viewingListUUID]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (isShareOpen && shareRef.current && !shareRef.current.contains(event.target as Node)) {
+        setIsShareOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isShareOpen]);
 
   const refreshItems = async () => {
     if (!listUUID) return;
@@ -68,8 +97,7 @@ export default function Home() {
     }
   };
 
-  const addItem = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const addItem = async (newItem: { title: string; description: string; url: string }) => {
     setError('');
 
     if (!user) {
@@ -90,8 +118,8 @@ export default function Home() {
       });
 
       if (response.ok) {
-        setNewItem({ title: '', description: '', url: '' });
         refreshItems();
+        setIsAddFormOpen(false);
       } else {
         setError('Failed to add item');
       }
@@ -118,9 +146,22 @@ export default function Home() {
   };
 
   const copyShareableLink = () => {
+    if (!shareableLink) return;
     navigator.clipboard.writeText(shareableLink);
-    alert('Link copied to clipboard!');
+    setCopied(true);
+    if (copyTimeoutRef.current) {
+      clearTimeout(copyTimeoutRef.current);
+    }
+    copyTimeoutRef.current = setTimeout(() => setCopied(false), 5000);
   };
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
+    };
+  }, []);
 
   if (authLoading) {
     return (
@@ -152,106 +193,117 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 p-8">
-      <div className="max-w-4xl mx-auto">
-        <h1 className="text-4xl font-bold text-gray-800 dark:text-white mb-8 text-center">
-          🎁 WiWi - What I Want Is
-        </h1>
-
-        {/* Viewing mode indicator for unauthenticated users */}
-        {!user && (
-          <div className="bg-blue-50 dark:bg-blue-900 rounded-lg p-4 mb-6 text-center">
-            <p className="text-blue-800 dark:text-blue-200">
-              You're viewing someone's wishlist. <a href="/auth" className="underline font-semibold">Sign up</a> to create your own!
-            </p>
-          </div>
-        )}
-
-        {/* Shareable link section for list owners */}
-        {isOwner && user && (
-          <div className="bg-green-50 dark:bg-green-900 rounded-lg p-4 mb-6">
-            <h3 className="text-sm font-semibold text-green-800 dark:text-green-200 mb-2">
-              Share Your List
-            </h3>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={shareableLink}
-                readOnly
-                className="flex-1 px-3 py-2 bg-white dark:bg-gray-800 border border-green-300 dark:border-green-700 rounded text-sm"
-              />
-              <button
-                onClick={copyShareableLink}
-                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition-colors text-sm font-medium"
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
+      {/* Header */}
+      <header className="border-b border-gray-200 bg-white dark:bg-gray-900">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+          <a href="/" className="text-2xl font-bold text-blue-600">
+            WiWi
+          </a>
+          <div className="flex items-center gap-4">
+            {user ? (
+              <>
+                <span className="text-sm text-gray-700 dark:text-gray-300">
+                  Hello, {user.name || user.email}
+                </span>
+                <button
+                  onClick={logout}
+                  className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
+                >
+                  Logout
+                </button>
+              </>
+            ) : (
+              <a
+                href="/auth"
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
               >
-                Copy Link
-              </button>
-            </div>
+                Sign Up / Login
+              </a>
+            )}
           </div>
-        )}
+        </div>
+      </header>
 
-        {/* Add Item Form - Only show for authenticated list owners */}
-        {isOwner && (
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 mb-8">
-            <h2 className="text-2xl font-semibold mb-4 text-gray-800 dark:text-white">Add New Wish</h2>
-            <form onSubmit={addItem} className="space-y-4">
-              {error && <div className="text-red-500 text-sm">{error}</div>}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Title *
-                </label>
-                <input
-                  type="text"
-                  value={newItem.title}
-                  onChange={(e) => setNewItem({ ...newItem, title: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                  placeholder="What do you want?"
-                />
+      <div className="p-8">
+        <div className="max-w-4xl mx-auto">
+          {/* Wishlist Items */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-semibold text-gray-800 dark:text-white">
+                {isOwner ? 'My Wishlist' : (listOwnerName ? `${listOwnerName}'s Wishlist` : 'Wishlist')}
+              </h2>
+              <div className="flex items-center gap-3 mt-2 relative">
+                {/* Add icon for list owners */}
+                {isOwner && user && (
+                  <button
+                    onClick={() => setIsAddFormOpen(true)}
+                    title="Add item to list"
+                    className="text-white hover:text-blue-200 transition-colors"
+                    aria-label="Add item"
+                  >
+                    <AddIcon fontSize="large" />
+                  </button>
+                )}
+                {/* Share button for all users */}
+                {(isOwner || !user) && (
+                  <div
+                    className="flex items-center gap-2 relative"
+                    ref={shareRef}
+                  >
+                    <button
+                      title="Share link"
+                      className="text-white hover:text-blue-200 transition-colors"
+                      aria-label="Toggle share link"
+                      onClick={() => setIsShareOpen((open) => !open)}
+                    >
+                      <LinkIcon fontSize="large" />
+                    </button>
+                    {isShareOpen && (
+                      <div className="absolute right-0 top-8 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 shadow-lg rounded-lg px-4 py-3 w-72 border border-gray-100 dark:border-gray-700 flex flex-col gap-3">
+                        <div className="text-sm font-semibold">Share your WiWi</div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            readOnly
+                            value={shareableLink || 'No link available'}
+                            onFocus={(e) => e.target.select()}
+                            className="w-full h-9 text-xs text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2"
+                          />
+                          <button
+                            onClick={copyShareableLink}
+                            disabled={!shareableLink}
+                            className="h-9 w-10 bg-blue-600 disabled:bg-gray-400 text-white rounded hover:bg-blue-500 transition-colors flex items-center justify-center"
+                            aria-label="Copy shareable link"
+                          >
+                            {copied ? <CheckCircleIcon fontSize="medium" /> : <ContentCopyIcon fontSize="medium" />}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Description
-                </label>
-                <textarea
-                  value={newItem.description}
-                  onChange={(e) => setNewItem({ ...newItem, description: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                  placeholder="Add more details..."
-                  rows={3}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  URL
-                </label>
-                <input
-                  type="url"
-                  value={newItem.url}
-                  onChange={(e) => setNewItem({ ...newItem, url: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                  placeholder="https://..."
-                />
-              </div>
-              <button
-                type="submit"
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
-              >
-                Add to Wishlist
-              </button>
-            </form>
-          </div>
-        )}
-
-        {/* Wishlist Items */}
-        <div className="space-y-4">
-          <h2 className="text-2xl font-semibold text-gray-800 dark:text-white mb-4">
-            {isOwner ? 'My Wishlist' : 'Wishlist'}
-          </h2>
-          {items.length === 0 ? (
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-8 text-center text-gray-500 dark:text-gray-400">
-              {isOwner ? 'No items yet. Add your first wish above!' : 'This wishlist is empty.'}
             </div>
-          ) : (
+            {/* Add Item Form - Only show for authenticated list owners */}
+            {isOwner && (
+              <div className="mb-6">
+                {error && (
+                  <div className="text-red-500 text-sm bg-red-50 dark:bg-red-900 p-3 rounded mb-4">
+                    {error}
+                  </div>
+                )}
+                <AddItemForm
+                  isOpen={isAddFormOpen}
+                  onAdd={addItem}
+                  onCancel={() => setIsAddFormOpen(false)}
+                />
+              </div>
+            )}
+            {items.length === 0 ? (
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-8 text-center text-gray-500 dark:text-gray-400">
+                {isOwner ? 'No items yet. Add your first wish using the + button!' : 'This wishlist is empty.'}
+              </div>
+            ) : (
             items.map((item) => (
               <div
                 key={item.id}
@@ -288,7 +340,8 @@ export default function Home() {
                 </div>
               </div>
             ))
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>
