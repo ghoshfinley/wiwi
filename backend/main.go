@@ -16,12 +16,14 @@ import (
 )
 
 type WishlistItem struct {
-	ID          int    `json:"id"`
-	UserUUID    string `json:"user_uuid"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	URL         string `json:"url"`
-	CreatedAt   string `json:"created_at"`
+	ID              int      `json:"id"`
+	UserUUID        string   `json:"user_uuid"`
+	Title           string   `json:"title"`
+	Description     string   `json:"description"`
+	URL             string   `json:"url"`
+	InterestedNames []string `json:"interested_names"`
+	BoughtByNames   []string `json:"bought_by_names"`
+	CreatedAt       string   `json:"created_at"`
 }
 
 type User struct {
@@ -65,6 +67,7 @@ func main() {
 		uuid TEXT PRIMARY KEY,
 		email TEXT UNIQUE NOT NULL,
 		name TEXT,
+		wishlist_name TEXT,
 		password_hash TEXT NOT NULL,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);`
@@ -93,27 +96,29 @@ func main() {
 
 	// Migrate existing table: add user_uuid column if it doesn't exist
 	addColumnSQL := `ALTER TABLE wishlist_items ADD COLUMN user_uuid TEXT;`
-	_, err = db.Exec(addColumnSQL)
-	// Ignore error if column already exists
-	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
-		log.Printf("Migration note: %v (this is okay if column already exists)", err)
-	}
+	_, _ = db.Exec(addColumnSQL)
+
+	// Migrate users table: add wishlist_name column if it doesn't exist
+	addWishlistNameSQL := `ALTER TABLE users ADD COLUMN wishlist_name TEXT;`
+	_, _ = db.Exec(addWishlistNameSQL)
+
+	// Migrate wishlist_items: add interested_count, interested_names, is_bought, and bought_by_name columns
+	_, _ = db.Exec(`ALTER TABLE wishlist_items ADD COLUMN interested_count INTEGER DEFAULT 0;`)
+	_, _ = db.Exec(`ALTER TABLE wishlist_items ADD COLUMN interested_names TEXT DEFAULT '[]';`)
+	_, _ = db.Exec(`ALTER TABLE wishlist_items ADD COLUMN is_bought BOOLEAN DEFAULT 0;`)
+	_, _ = db.Exec(`ALTER TABLE wishlist_items ADD COLUMN bought_by_names TEXT DEFAULT '[]';`)
 
 	// Set up routes
 	http.HandleFunc("/api/auth/signup", corsMiddleware(handleSignup))
 	http.HandleFunc("/api/auth/login", corsMiddleware(handleLogin))
-	http.HandleFunc("/api/users/", corsMiddleware(handleUserItems))
+	http.HandleFunc("/api/users/", corsMiddleware(handleUserRoutes))
 	http.HandleFunc("/api/items", corsMiddleware(handleItems))
-	http.HandleFunc("/api/items/", corsMiddleware(handleItemByID))
+	http.HandleFunc("/api/items/", corsMiddleware(handleItemRoutes))
 	http.HandleFunc("/health", corsMiddleware(handleHealth))
+	addr := "0.0.0.0:8081"
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8081"
-	}
-
-	log.Printf("Server starting on port %s...", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	log.Printf("Server starting on %s...", addr)
+	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
 func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
@@ -242,47 +247,54 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func handleUserItems(w http.ResponseWriter, r *http.Request) {
+func handleUserRoutes(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	// Extract user UUID from path: /api/users/{uuid}/items or /api/users/{uuid}/items/{id}
-	path := r.URL.Path
-	parts := strings.Split(strings.Trim(path, "/"), "/")
+	// Extract user UUID from path: /api/users/{uuid}...
+	path := strings.Trim(r.URL.Path, "/")
+	parts := strings.Split(path, "/")
 
-	if len(parts) < 3 || parts[0] != "api" || parts[1] != "users" {
+	if len(parts) < 3 {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
 
 	userUUID := parts[2]
 
-	// Check if it's an item-specific operation
-	if len(parts) >= 5 && parts[3] == "items" {
-		// /api/users/{uuid}/items/{id}
-		itemID, err := strconv.Atoi(parts[4])
-		if err != nil {
-			http.Error(w, "Invalid item ID", http.StatusBadRequest)
-			return
-		}
-
+	// Handle /api/users/{uuid}
+	if len(parts) == 3 {
 		switch r.Method {
-		case "DELETE":
-			deleteUserItem(w, r, userUUID, itemID)
+		case "GET":
+			getUserInfo(w, r, userUUID)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 		return
 	}
 
-	if len(parts) == 4 && parts[3] == "items" {
-		// /api/users/{uuid}/items
-		switch r.Method {
-		case "GET":
-			getUserItems(w, r, userUUID)
-		case "POST":
-			createUserItem(w, r, userUUID)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	// Handle /api/users/{uuid}/items...
+	if parts[3] == "items" {
+		if len(parts) == 4 {
+			switch r.Method {
+			case "GET":
+				getUserItems(w, r, userUUID)
+			case "POST":
+				createUserItem(w, r, userUUID)
+			default:
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
+		} else if len(parts) == 5 {
+			itemID, err := strconv.Atoi(parts[4])
+			if err != nil {
+				http.Error(w, "Invalid item ID", http.StatusBadRequest)
+				return
+			}
+			switch r.Method {
+			case "DELETE":
+				deleteUserItem(w, r, userUUID, itemID)
+			default:
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			}
 		}
 		return
 	}
@@ -290,8 +302,26 @@ func handleUserItems(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Invalid path", http.StatusBadRequest)
 }
 
+func getUserInfo(w http.ResponseWriter, r *http.Request, userUUID string) {
+	var user User
+	err := db.QueryRow("SELECT uuid, email, name FROM users WHERE uuid = ?", userUUID).
+		Scan(&user.UUID, &user.Email, &user.Name)
+
+	if err == sql.ErrNoRows {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(user)
+}
+
+
+
 func getUserItems(w http.ResponseWriter, r *http.Request, userUUID string) {
-	rows, err := db.Query("SELECT id, COALESCE(user_uuid, '') as user_uuid, title, description, url, created_at FROM wishlist_items WHERE user_uuid = ? ORDER BY created_at DESC", userUUID)
+	rows, err := db.Query("SELECT id, COALESCE(user_uuid, '') as user_uuid, title, description, url, COALESCE(interested_names, '[]'), COALESCE(bought_by_names, '[]'), created_at FROM wishlist_items WHERE user_uuid = ? ORDER BY created_at DESC", userUUID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -302,11 +332,24 @@ func getUserItems(w http.ResponseWriter, r *http.Request, userUUID string) {
 	for rows.Next() {
 		var item WishlistItem
 		var createdAt time.Time
-		err := rows.Scan(&item.ID, &item.UserUUID, &item.Title, &item.Description, &item.URL, &createdAt)
+		var namesJSON string
+		var buyersJSON string
+		err := rows.Scan(&item.ID, &item.UserUUID, &item.Title, &item.Description, &item.URL, &namesJSON, &buyersJSON, &createdAt)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+
+		json.Unmarshal([]byte(namesJSON), &item.InterestedNames)
+		if item.InterestedNames == nil {
+			item.InterestedNames = []string{}
+		}
+
+		json.Unmarshal([]byte(buyersJSON), &item.BoughtByNames)
+		if item.BoughtByNames == nil {
+			item.BoughtByNames = []string{}
+		}
+
 		item.CreatedAt = createdAt.Format(time.RFC3339)
 		items = append(items, item)
 	}
@@ -380,30 +423,134 @@ func handleItems(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func handleItemByID(w http.ResponseWriter, r *http.Request) {
+func handleItemRoutes(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	// Extract ID from URL path
-	path := r.URL.Path
-	idStr := path[len("/api/items/"):]
-	id, err := strconv.Atoi(idStr)
+	path := strings.Trim(r.URL.Path, "/")
+	parts := strings.Split(path, "/")
+
+	if len(parts) < 3 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	id, err := strconv.Atoi(parts[2])
 	if err != nil {
 		http.Error(w, "Invalid ID", http.StatusBadRequest)
 		return
 	}
 
-	switch r.Method {
-	case "GET":
-		getItemByID(w, r, id)
-	case "DELETE":
-		deleteItem(w, r, id)
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if len(parts) == 3 {
+		switch r.Method {
+		case "GET":
+			getItemByID(w, r, id)
+		case "DELETE":
+			deleteItem(w, r, id)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+		return
 	}
+
+	if len(parts) == 4 {
+		action := parts[3]
+		var req struct {
+			Name string `json:"name"`
+		}
+
+		if r.Method == "POST" {
+			json.NewDecoder(r.Body).Decode(&req)
+			log.Printf("Action %s on item %d by %s", action, id, req.Name)
+
+			switch action {
+			case "interest":
+				interestItem(w, r, id, req.Name)
+			case "buy":
+				buyItem(w, r, id, req.Name)
+			default:
+				http.Error(w, "Invalid action", http.StatusBadRequest)
+			}
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+		return
+	}
+
+	http.Error(w, "Invalid path", http.StatusBadRequest)
 }
 
+func interestItem(w http.ResponseWriter, r *http.Request, id int, name string) {
+	var namesJSON string
+	err := db.QueryRow("SELECT COALESCE(interested_names, '[]') FROM wishlist_items WHERE id = ?", id).Scan(&namesJSON)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var names []string
+	json.Unmarshal([]byte(namesJSON), &names)
+
+	// Check if name already exists
+	exists := false
+	for _, n := range names {
+		if n == name {
+			exists = true
+			break
+		}
+	}
+
+	if !exists {
+		names = append(names, name)
+		newNamesJSON, _ := json.Marshal(names)
+		_, err = db.Exec("UPDATE wishlist_items SET interested_names = ? WHERE id = ?", string(newNamesJSON), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "interest marked"})
+}
+
+func buyItem(w http.ResponseWriter, r *http.Request, id int, name string) {
+	var buyersJSON string
+	err := db.QueryRow("SELECT COALESCE(bought_by_names, '[]') FROM wishlist_items WHERE id = ?", id).Scan(&buyersJSON)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var buyers []string
+	json.Unmarshal([]byte(buyersJSON), &buyers)
+
+	// Check if name already exists
+	exists := false
+	for _, b := range buyers {
+		if b == name {
+			exists = true
+			break
+		}
+	}
+
+	if !exists {
+		buyers = append(buyers, name)
+		newBuyersJSON, _ := json.Marshal(buyers)
+		_, err = db.Exec("UPDATE wishlist_items SET bought_by_names = ? WHERE id = ?", string(newBuyersJSON), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "item bought"})
+}
+
+
+
 func getItems(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query("SELECT id, COALESCE(user_uuid, '') as user_uuid, title, description, url, created_at FROM wishlist_items ORDER BY created_at DESC")
+	rows, err := db.Query("SELECT id, COALESCE(user_uuid, '') as user_uuid, title, description, url, COALESCE(interested_names, '[]'), COALESCE(bought_by_names, '[]'), created_at FROM wishlist_items ORDER BY created_at DESC")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -414,11 +561,24 @@ func getItems(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var item WishlistItem
 		var createdAt time.Time
-		err := rows.Scan(&item.ID, &item.UserUUID, &item.Title, &item.Description, &item.URL, &createdAt)
+		var namesJSON string
+		var buyersJSON string
+		err := rows.Scan(&item.ID, &item.UserUUID, &item.Title, &item.Description, &item.URL, &namesJSON, &buyersJSON, &createdAt)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+
+		json.Unmarshal([]byte(namesJSON), &item.InterestedNames)
+		if item.InterestedNames == nil {
+			item.InterestedNames = []string{}
+		}
+
+		json.Unmarshal([]byte(buyersJSON), &item.BoughtByNames)
+		if item.BoughtByNames == nil {
+			item.BoughtByNames = []string{}
+		}
+
 		item.CreatedAt = createdAt.Format(time.RFC3339)
 		items = append(items, item)
 	}
@@ -429,9 +589,11 @@ func getItems(w http.ResponseWriter, r *http.Request) {
 func getItemByID(w http.ResponseWriter, r *http.Request, id int) {
 	var item WishlistItem
 	var createdAt time.Time
+	var namesJSON string
+	var buyersJSON string
 
-	err := db.QueryRow("SELECT id, COALESCE(user_uuid, '') as user_uuid, title, description, url, created_at FROM wishlist_items WHERE id = ?", id).
-		Scan(&item.ID, &item.UserUUID, &item.Title, &item.Description, &item.URL, &createdAt)
+	err := db.QueryRow("SELECT id, COALESCE(user_uuid, '') as user_uuid, title, description, url, COALESCE(interested_names, '[]'), COALESCE(bought_by_names, '[]'), created_at FROM wishlist_items WHERE id = ?", id).
+		Scan(&item.ID, &item.UserUUID, &item.Title, &item.Description, &item.URL, &namesJSON, &buyersJSON, &createdAt)
 
 	if err == sql.ErrNoRows {
 		http.Error(w, "Item not found", http.StatusNotFound)
@@ -439,6 +601,16 @@ func getItemByID(w http.ResponseWriter, r *http.Request, id int) {
 	} else if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	json.Unmarshal([]byte(namesJSON), &item.InterestedNames)
+	if item.InterestedNames == nil {
+		item.InterestedNames = []string{}
+	}
+
+	json.Unmarshal([]byte(buyersJSON), &item.BoughtByNames)
+	if item.BoughtByNames == nil {
+		item.BoughtByNames = []string{}
 	}
 
 	item.CreatedAt = createdAt.Format(time.RFC3339)

@@ -30,7 +30,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const userName = localStorage.getItem('userName');
 
     if (userUUID && userEmail) {
-      setUser({ uuid: userUUID, email: userEmail, name: userName || '' });
+      setUser({
+        uuid: userUUID,
+        email: userEmail,
+        name: userName || '',
+      });
     }
     setLoading(false);
   }, [pathname, router]);
@@ -39,6 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('userUUID');
     localStorage.removeItem('userEmail');
     localStorage.removeItem('userName');
+    localStorage.removeItem('wishlistName');
     setUser(null);
     router.push('/auth');
   };

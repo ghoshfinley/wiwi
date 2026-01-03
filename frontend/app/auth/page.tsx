@@ -21,7 +21,7 @@ export default function AuthPage() {
 
     try {
       const endpoint = isLogin ? '/api/auth/login' : '/api/auth/signup';
-      const body = isLogin 
+      const body = isLogin
         ? { email, password }
         : { email, password, name };
 
@@ -38,7 +38,8 @@ export default function AuthPage() {
         localStorage.setItem('userUUID', data.uuid);
         localStorage.setItem('userEmail', data.email);
         localStorage.setItem('userName', data.name || '');
-        
+        localStorage.setItem('wishlistName', data.wishlist_name || 'My Wishlist');
+
         // Redirect to home page
         router.push('/');
       } else {
