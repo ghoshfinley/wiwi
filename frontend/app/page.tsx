@@ -15,7 +15,7 @@ export default function Home() {
   const [newItem, setNewItem] = useState({ title: '', description: '', url: '' });
   const [error, setError] = useState('');
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8081';
 
   useEffect(() => {
     const fetchItems = async () => {
