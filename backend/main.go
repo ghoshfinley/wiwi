@@ -102,7 +102,7 @@ func main() {
 	// Set up routes
 	http.HandleFunc("/api/auth/signup", corsMiddleware(handleSignup))
 	http.HandleFunc("/api/auth/login", corsMiddleware(handleLogin))
-	http.HandleFunc("/api/users/", corsMiddleware(handleUserItems))
+	http.HandleFunc("/api/users/", corsMiddleware(handleUsers))
 	http.HandleFunc("/api/items", corsMiddleware(handleItems))
 	http.HandleFunc("/api/items/", corsMiddleware(handleItemByID))
 	http.HandleFunc("/health", corsMiddleware(handleHealth))
@@ -242,12 +242,21 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func handleUserItems(w http.ResponseWriter, r *http.Request) {
+func handleUsers(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	// Extract user UUID from path: /api/users/{uuid}/items or /api/users/{uuid}/items/{id}
+	// Extract user UUID from path: /api/users/{uuid}, /api/users/{uuid}/items, or /api/users/{uuid}/items/{id}
 	path := r.URL.Path
 	parts := strings.Split(strings.Trim(path, "/"), "/")
+	
+	// Filter out empty parts
+	var filteredParts []string
+	for _, part := range parts {
+		if part != "" {
+			filteredParts = append(filteredParts, part)
+		}
+	}
+	parts = filteredParts
 
 	if len(parts) < 3 || parts[0] != "api" || parts[1] != "users" {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
@@ -287,7 +296,34 @@ func handleUserItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 3 {
+		// /api/users/{uuid} - get user info
+		switch r.Method {
+		case "GET":
+			getUserInfo(w, r, userUUID)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+		return
+	}
+
 	http.Error(w, "Invalid path", http.StatusBadRequest)
+}
+
+func getUserInfo(w http.ResponseWriter, r *http.Request, userUUID string) {
+	var user User
+	err := db.QueryRow("SELECT uuid, email, name FROM users WHERE uuid = ?", userUUID).
+		Scan(&user.UUID, &user.Email, &user.Name)
+
+	if err == sql.ErrNoRows {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(user)
 }
 
 func getUserItems(w http.ResponseWriter, r *http.Request, userUUID string) {

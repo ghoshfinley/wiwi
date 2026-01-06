@@ -66,9 +66,23 @@ export default function Home() {
     } else if (viewingListUUID) {
       // Generate shareable link for viewers of a shared list
       setShareableLink(`${baseUrl}/?list=${viewingListUUID}`);
-      setListOwnerName('');
+      
+      // Fetch the list owner's name from the API
+      const fetchOwnerName = async () => {
+        try {
+          const response = await fetch(`${API_URL}/api/users/${viewingListUUID}`);
+          if (response.ok) {
+            const ownerData = await response.json();
+            setListOwnerName(ownerData.name || ownerData.email || '');
+          }
+        } catch (err) {
+          console.error('Failed to fetch list owner name:', err);
+        }
+      };
+      
+      fetchOwnerName();
     }
-  }, [user, viewingListUUID]);
+  }, [user, viewingListUUID, API_URL]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -345,5 +359,5 @@ export default function Home() {
         </div>
       </div>
     </div>
-  );git 
+  );
 }
